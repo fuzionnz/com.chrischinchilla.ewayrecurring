@@ -61,6 +61,27 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     return self::$_singleton[$processorName];
   }
 
+  /**
+   * Add client encryption script if public key is in the signature field.
+   *
+   * By adding the public key to the eway configuration sites can enable client side encryption.
+   *
+   * https://www.eway.com.au/developers/api/client-side-encryption
+   *
+   * @param CRM_Core_Form $form
+   *
+   * @return bool
+   *   Should form building stop at this point?
+   */
+  public function buildForm(&$form) {
+    if (!empty($this->_paymentProcessor['signature'])) {
+      CRM_Core_Resources::singleton()->addSetting(array('eway' => array('ewayKey' => $this->_paymentProcessor['signature'])))
+      ->addScriptFile('com.chrischinchilla.ewayrecurring', 'js/EwayClientSide.js', 5, 'page-footer')
+      ->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.debug.js', 1, 'page-footer');
+      // ->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.js', 10, 'page-footer');
+    }
+    return FALSE;
+  }
 
   /**********************************************************
    * This function sends request and receives response from eWAY payment gateway.
@@ -815,6 +836,42 @@ The CiviCRM eWAY Payment Processor Module
       'payment_status_id' => 1,
     );
     return $result;
+  }
+
+  /**
+   * Return an array of all the details about the fields potentially required for payment fields.
+   *
+   * Only those determined by getPaymentFormFields will actually be assigned to the form.
+   *
+   * This has been overridden in order that browser-encrypted cvv field will not be subject to core validation.
+   * @return array
+   *   field metadata
+   */
+  public function getPaymentFormFieldsMetadata() {
+    $metadata = parent::getPaymentFormFieldsMetadata();
+    if (!empty($this->_paymentProcessor['signature'])) {
+      unset($metadata['cvv2']['rules']);
+    }
+    return $metadata;
+  }
+
+  /**
+   * Validate Payment instrument validation.
+   *
+   * @param array $values
+   * @param array $errors
+   */
+  public function validatePaymentInstrument($values, &$errors) {
+    if (empty($this->_paymentProcessor['signature'])) {
+      parent::validatePaymentInstrument($values, $errors);
+    }
+    else {
+      foreach (array('credit_card_number', 'cvv2') as $field) {
+        if (substr($values[$field], 0, 9) != 'eCrypted:') {
+          $errors[$field] = ts('Invalid encrypted value');
+        }
+      }
+    }
   }
 
   /**

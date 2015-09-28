@@ -15,6 +15,7 @@ return array(
       'user_name_label' => 'Username',
       'password_label' => 'Password',
       'subject_label' => 'Customer Id',
+      'signature_label' => 'Public Key (if wishing to use Client Encryption - recommended)',
       'class_name' => 'Payment_Ewayrecurring',
       'billing_mode' => 1,
       'url_site_default' => 'https://www.eway.com.au/gateway_cvn/xmlpayment.asp',
