@@ -211,8 +211,8 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
    * @param null $contributionID
    *   If a contribution exists pass in the contribution ID.
    *
-   * @return bool True if ID exists, else false
-   * True if ID exists, else false
+   * @return bool
+   *   True if ID exists, else false
    */
   protected function checkDupe($invoiceId, $contributionID = NULL) {
     $contribution = new CRM_Contribute_DAO_Contribution();
@@ -224,20 +224,18 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     return $contribution->find();
   }
 
-  /*************************************************************************************************
-   * This function checks the eWAY response status - returning a boolean false if status != 'true'
-   ************************************************************************************************
+  /**
+   * This function checks the eWAY response status - returning a boolean false if status != 'true'.
    *
-   * @param GatewayResponse $response
+   * @param stdObj $response
    *
    * @return bool
    */
-  public function isError(&$response) {
-    $status = $response->Status();
-    if ((stripos($status, "true")) === FALSE) {
-      return TRUE;
+  public function isError($response) {
+    if ($response->ResponseCode == '00' && $response->AuthorisationCode) {
+      return FALSE;
     }
-    return FALSE;
+    return TRUE;
   }
 
   /**************************************************
@@ -393,90 +391,35 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
   }
 
   /**
-   * Send an alert email.
-   *
-   * @param $p_eWAY_tran_num
-   * @param $p_trxn_out
-   * @param $p_trxn_back
-   * @param $p_request
-   * @param $p_response
-   */
-  public function send_alert_email($p_eWAY_tran_num, $p_trxn_out, $p_trxn_back, $p_request, $p_response) {
-    // Initialization call is required to use CiviCRM APIs.
-    civicrm_initialize(TRUE);
-
-    list($fromName, $fromEmail) = CRM_Core_BAO_Domain::getNameAndEmail();
-    $from      = "$fromName <$fromEmail>";
-
-    $toName    = 'Support at eWAY';
-    $toEmail   = 'Support@eWAY.com.au';
-
-    $subject   = "ALERT: Unique Trxn Number Failure : eWAY Transaction # = [" . $p_eWAY_tran_num . "]";
-
-    $message   = "
-TRXN sent out with request   = '$p_trxn_out'.
-TRXN sent back with response = '$p_trxn_back'.
-
-This is a ['$this->_mode'] transaction.
-
-
-Request XML =
----------------------------------------------------------------------------
-$p_request
----------------------------------------------------------------------------
-
-
-Response XML =
----------------------------------------------------------------------------
-$p_response
----------------------------------------------------------------------------
-
-
-Regards
-
-The CiviCRM eWAY Payment Processor Module
-";
-
-    $params                = array();
-
-    $params['groupName'] = 'eWay Email Sender';
-    $params['from'] = $from;
-    $params['toName'] = $toName;
-    $params['toEmail'] = $toEmail;
-    $params['subject'] = $subject;
-    $params['text'] = $message;
-
-    CRM_Utils_Mail::send($params);
-  }
-
-  /**
    * Pass xml to eWay gateway and return response if the call succeeds.
    *
-   * @param $requestXML
+   * @param array $eWAYRequestFields
    *
    * @return mixed
    * @throws \CRM_Core_Exception
    */
-  protected function callEwayGateway($requestXML) {
+  protected function callEwayGateway($eWAYRequestFields) {
     $submit = curl_init($this->_paymentProcessor['url_site']);
-
     if (!$submit) {
       throw new CRM_Core_Exception('Could not initiate connection to payment gateway');
     }
+
     curl_setopt($submit, CURLOPT_POST, TRUE);
     // Return the result on success, FALSE on failure.
     curl_setopt($submit, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($submit, CURLOPT_POSTFIELDS, $requestXML);
+    curl_setopt($submit, CURLOPT_VERBOSE, FALSE);
+    curl_setopt($submit, CURLOPT_POSTFIELDS, json_encode($eWAYRequestFields));
     curl_setopt($submit, CURLOPT_TIMEOUT, 36000);
+    curl_setopt($submit, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+    curl_setopt($submit, CURLOPT_USERPWD, $this->_paymentProcessor['user_name'] . ':' . $this->_paymentProcessor['password']);
     // if open_basedir or safe_mode are enabled in PHP settings CURLOPT_FOLLOW_LOCATION won't work so don't apply it
     // it's not really required CRM-5841
     if (ini_get('open_basedir') == '' && ini_get('safe_mode' == 'Off')) {
       // Ensure any Location headers are followed.
-      curl_setopt($submit, CURLOPT_FOLLOWLOCATION, 1);
+      //curl_setopt($submit, CURLOPT_FOLLOWLOCATION, 1);
     }
 
     $responseData = curl_exec($submit);
-
 
     //----------------------------------------------------------------------------------------------------
     // See if we had a curl error - if so tell 'em and bail out
@@ -611,11 +554,11 @@ The CiviCRM eWAY Payment Processor Module
       throw new CRM_Core_Exception('Failed to create managed customer - result is FALSE');
     }
     elseif (is_array($result)) {
-      throw new CRM_Core_Exception('Failed to create managed customer - result ('
-        . implode(', ', array_keys($result))
-        . ') is ('
-        . implode(', ', $result)
-        . ')');
+      $message = '';
+      foreach ($result as $key => $value) {
+        $message .= " $key : $value ";
+      }
+      throw new CRM_Core_Exception('Failed to create managed customer - ' . $message);
     }
     elseif (!is_numeric($result)) {
       throw new CRM_Core_Exception('Failed to create managed customer - result is ' . $result);
@@ -688,81 +631,65 @@ The CiviCRM eWAY Payment Processor Module
    * @return GatewayRequest
    * @throws \CRM_Core_Exception
    */
-  protected function getEwayRequest(&$params) {
-    $eWAYRequest = new GatewayRequest();
-
-    if (($eWAYRequest == NULL) || (!($eWAYRequest instanceof GatewayRequest))) {
-      throw new CRM_Core_Exception("Error: Unable to create eWAY Request object.");
-    }
-
-    $fullAddress = $params['street_address'] . ", " . $params['city'] . ", " . $params['state_province'] . ".";
-
-    //----------------------------------------------------------------------------------------------------
-    // We use CiviCRM's params 'invoiceID' as the unique transaction token to feed to eWAY
-    // Trouble is that eWAY only accepts 16 chars for the token, while CiviCRM's invoiceID is an 32.
-    // As its made from a "$invoiceID = md5(uniqid(rand(), true));" then using the first 16 chars
-    // should be alright
-    //----------------------------------------------------------------------------------------------------
-    $uniqueTrxnNum = substr($params['invoiceID'], 0, 16);
-
-    //----------------------------------------------------------------------------------------------------
-    // OPTIONAL: If TEST Card Number force an Override of URL and CustomerID.
-    // During testing CiviCRM once used the LIVE URL.
-    // This code can be uncommented to override the LIVE URL that if CiviCRM does that again.
-    //----------------------------------------------------------------------------------------------------
-    //  if ( ( $gateway_URL == "https://www.eway.com.au/gateway_cvn/xmlpayment.asp")
-    //  && ($params['credit_card_number'] == "4444333322221111" )) {
-    //  $ewayCustomerID = "87654321";
-    //  $gateway_URL    = "https://www.eway.com.au/gateway_cvn/xmltest/testpage.asp";
-    //  }
-
-    // 8 Chars - ewayCustomerID - Required
-    $eWAYRequest->EwayCustomerID($this->_paymentProcessor['subject']);
-    // 12 Chars - ewayTotalAmount (in cents) - Required
-    $eWAYRequest->InvoiceAmount($this->getAmountInCents($params));
-    // 50 Chars - ewayCustomerFirstName
-    $eWAYRequest->PurchaserFirstName($params['first_name']);
-    // 50 Chars - ewayCustomerLastName
-    $eWAYRequest->PurchaserLastName($params['last_name']);
-    // 50 Chars - ewayCustomerEmail
-    $eWAYRequest->PurchaserEmailAddress(CRM_Utils_Array::value('email', $params));
-    // 255 Chars - ewayCustomerAddress
-    $eWAYRequest->PurchaserAddress($fullAddress);
-    // 6 Chars - ewayCustomerPostcode
-    $eWAYRequest->PurchaserPostalCode($params['postal_code']);
-    // 1000 Chars - ewayCustomerInvoiceDescription
-    $eWAYRequest->InvoiceDescription($params['description']);
-    // 50 Chars - ewayCustomerInvoiceRef
-    $eWAYRequest->InvoiceReference($params['invoiceID']);
-    // 50 Chars - ewayCardHoldersName - Required
-    $eWAYRequest->CardHolderName($this->getCreditCardName($params));
-    // 20 Chars - ewayCardNumber  - Required
-    $eWAYRequest->CardNumber($params['credit_card_number']);
-    $eWAYRequest->CardExpiryMonth($this->getCreditCardExpiryMonth($params));
-    // 2 Chars - ewayCardExpiryYear - Required.
-    $eWAYRequest->CardExpiryYear($this->getCreditCardExpiryYear($params));
-    // 4 Chars - ewayCVN - Required if CVN Gateway used
-    $eWAYRequest->CVN($params['cvv2']);
-    // 16 Chars - ewayTrxnNumber
-    $eWAYRequest->TransactionNumber($uniqueTrxnNum);
-    // 255 Chars - ewayOption1
-    $eWAYRequest->EwayOption1('');
-    // 255 Chars - ewayOption2
-    $eWAYRequest->EwayOption2('');
-    // 255 Chars - ewayOption3
-    $eWAYRequest->EwayOption3('');
-    $eWAYRequest->CustomerBillingCountry($params['country']);
-
-    $eWAYRequest->CustomerIPAddress($params['ip_address']);
+  protected function getEwayRequestFields(&$params) {
+    $fields = $this->mapToEwayDirect($params);
+    // See https://eway.io/api-v3/#payment-methods - if storing a token it would
+    // be TokenPayment.
+    $fields['Method'] = 'ProcessPayment';
 
     // Allow further manipulation of the arguments via custom hooks ..
-    CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $eWAYRequest);
+    CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $fields);
 
     // Check for a duplicate after the hook has been called.
     if ($this->checkDupe($params['invoiceID'], CRM_Utils_Array::value('contributionID', $params))) {
       throw new CRM_Core_Exception('It appears that this transaction is a duplicate.  Have you already submitted the form once?  If so there may have been a connection problem.  Check your email for a receipts.  If you do not receive a receipt within 2 hours you can try your transaction again.  If you continue to have problems please contact the site administrator.');
     }
-    return $eWAYRequest;
+    return $fields;
+  }
+
+  /**
+   * Map parameters to the eway Direct fields.
+   *
+   * This mapping applies to token & single IF they are on the new url end_points
+   *
+   * https://eway.io/api-v3/#direct-connection
+   *
+   * @param array $params
+   *
+   * @return array
+   */
+  protected function mapToEwayDirect($params) {
+    $ewayFields = array(
+      'Customer' => array(
+        'Reference' => $params['contactID'],
+        'FirstName' => $params['first_name'],
+        'LastName' => $params['last_name'],
+        'PostalCode' => ($params['postal_code']),
+        'Email' => CRM_Utils_Array::value('email', $params),
+        'Country' => strtolower($params['country']),
+        'City' => $params['city'],
+        'Street1' => $params['street_address'],
+        'Street2' => !empty($params['supplemental_address_1']) ? $params['supplemental_address_1'] : '',
+        'State' => $params['state_province'],
+        'CardDetails' => array(
+          'ExpiryMonth' => ($this->getCreditCardExpiryMonth($params)),
+          'ExpiryYear' => $this->getCreditCardExpiryYear($params),
+          'Name' => $this->getCreditCardName($params),
+          'Number' => $params['credit_card_number'],
+          'CVN' => $params['cvv2'],
+        ),
+      ),
+      'Payment' => array(
+        'TotalAmount' => $this->getAmountInCents($params),
+        'InvoiceNumber' => $params['invoiceID'],
+        'InvoiceDescription' => $this->getPaymentDescription($params, 64),
+        'InvoiceReference' => $params['invoiceID'],
+      ),
+      'CustomerIP' => $params['ip_address'],
+      'DeviceID' => 'civicrm',
+      'TransactionType' => 'Purchase',
+  );
+    return $ewayFields;
   }
 
   /**
@@ -775,65 +702,25 @@ The CiviCRM eWAY Payment Processor Module
    * @throws \CRM_Core_Exception
    */
   protected function processSinglePayment(&$params) {
+    $eWAYRequestFields = $this->getEwayRequestFields($params);
 
-    $eWAYRequest = $this->getEwayRequest($params);
     if ($this->getDummySuccessResult()) {
       return $this->getDummySuccessResult();
-    }
-    $eWAYResponse = new GatewayResponse();
+    };
 
-    if (($eWAYResponse == NULL) || (!($eWAYResponse instanceof GatewayResponse))) {
-      throw new CRM_Core_Exception("Error: Unable to create eWAY Response object.");
-    }
-
-    //----------------------------------------------------------------------------------------------------
-    // Convert to XML and send the payment information
-    //----------------------------------------------------------------------------------------------------
-    $requestXML = $eWAYRequest->ToXML();
-    $responseData = $this->callEwayGateway($requestXML);
-
+    $responseData = $this->callEwayGateway($eWAYRequestFields);
     //----------------------------------------------------------------------------------------------------
     // Payment successfully sent to gateway - process the response now
     //----------------------------------------------------------------------------------------------------
-    $eWAYResponse->ProcessResponse($responseData);
+    $eWAYResponse = json_decode($responseData);
 
-    //----------------------------------------------------------------------------------------------------
-    // See if we got an OK result - if not tell 'em and bail out
-    //----------------------------------------------------------------------------------------------------
     if (self::isError($eWAYResponse)) {
-      $eWayTrxnError = $eWAYResponse->Error();
-
-      if (substr($eWayTrxnError, 0, 6) == "Error:") {
-        throw new CRM_Core_Exception($eWayTrxnError);
-      }
-      $eWayErrorCode = substr($eWayTrxnError, 0, 2);
-      $eWayErrorDesc = substr($eWayTrxnError, 3);
-
-      throw new CRM_Core_Exception("Error: [" . $eWayErrorCode . "] - " . $eWayErrorDesc . ".");
+      throw new CRM_Core_Exception("Error: [" . implode(',', $eWAYResponse->Errors) . ".");
     }
 
-    //-----------------------------------------------------------------------------------------------------
-    // Cross-Check - the unique 'TrxnReference' we sent out should match the just received 'TrxnReference'
-    //
-    // PLEASE NOTE: If this occurs (which is highly unlikely) its a serious error as it would mean we have
-    // received an OK status from eWAY, but their Gateway has not returned the correct unique
-    // token - ie something is broken, BUT money has been taken from the client's account,
-    // so we can't very well error-out as CiviCRM will then not process the registration.
-    // There is an error message commented out here but my preferred response to this unlikely
-    // possibility is to email 'support@eWAY.com.au'
-    //-----------------------------------------------------------------------------------------------------
-    $eWayTrxnReference_OUT = $params['invoiceID'];
-    $eWayTrxnReference_IN = $eWAYResponse->InvoiceReference();
-
-    if ($eWayTrxnReference_IN != $eWayTrxnReference_OUT) {
-      // return self::errorExit( 9009, "Error: Unique Trxn code was not returned by eWAY Gateway. This is extremely unusual! Please contact the administrator of this site immediately with details of this transaction.");
-      self::send_alert_email($eWAYResponse->TransactionNumber(), $eWayTrxnReference_OUT, $eWayTrxnReference_IN, $requestXML, $responseData);
-    }
-
-    $status = ($eWAYResponse->BeagleScore()) ? ($eWAYResponse->Status() . ': ' . $eWAYResponse->BeagleScore()) : $eWAYResponse->Status();
+    $status = ($eWAYResponse->BeagleScore) ? ($eWAYResponse->ResponseMessage . ': ' . $eWAYResponse->BeagleScore) : $eWAYResponse->ResponseMessage;
     $result = array(
-      'gross_amount' => $eWAYResponse->Amount(),
-      'trxn_id' => $eWAYResponse->TransactionNumber(),
+      'trxn_id' => $eWAYResponse->TransactionID,
       'trxn_result_code' => $status,
       'payment_status_id' => 1,
     );
@@ -868,7 +755,7 @@ The CiviCRM eWAY Payment Processor Module
       parent::validatePaymentInstrument($values, $errors);
     }
     else {
-      foreach (array('credit_card_number', 'cvv2') as $field) {
+      foreach (array('credit_card_number', ) as $field) {
         if (substr($values[$field], 0, 9) != 'eCrypted:') {
           $errors[$field] = ts('Invalid encrypted value');
         }
@@ -894,6 +781,35 @@ The CiviCRM eWAY Payment Processor Module
       );
     }
     return FALSE;
+  }
+
+  /**
+   * Get description of payment to pass to processor.
+   *
+   * This is often what people see in the interface so we want to get
+   * as much unique information in as possible within the field length (& presumably the early part of the field)
+   *
+   * People seeing these can be assumed to be advanced users so quantity of information probably trumps
+   * having field names to clarify
+   *
+   * @param array $params
+   * @param int $length
+   *
+   * @return string
+   */
+  protected function getPaymentDescription($params, $length = 24) {
+    $parts = array('contactID', 'contributionID', 'description', 'billing_first_name', 'billing_last_name');
+    $validParts = array();
+    if (isset($params['description'])) {
+      $uninformativeStrings = array(ts('Online Event Registration: '), ts('Online Contribution: '));
+      $params['description'] = str_replace($uninformativeStrings, '', $params['description']);
+    }
+    foreach ($parts as $part) {
+      if ((!empty($params[$part]))) {
+        $validParts[] = $params[$part];
+      }
+    }
+    return substr(implode('-', $validParts), 0, $length);
   }
 
 }
