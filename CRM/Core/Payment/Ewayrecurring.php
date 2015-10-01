@@ -77,8 +77,8 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     if (!empty($this->_paymentProcessor['signature'])) {
       CRM_Core_Resources::singleton()->addSetting(array('eway' => array('ewayKey' => $this->_paymentProcessor['signature'])))
       ->addScriptFile('com.chrischinchilla.ewayrecurring', 'js/EwayClientSide.js', 5, 'page-footer')
-      ->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.debug.js', 1, 'page-footer');
-      // ->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.js', 10, 'page-footer');
+      //->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.debug.js', 1, 'page-footer');
+       ->addScriptUrl('https://secure.ewaypayments.com/scripts/eCrypt.js', 10, 'page-footer');
     }
     return FALSE;
   }
