@@ -3,7 +3,8 @@ This branch provides client side encryption - whereby the credit card details ar
 encrypted version is in the POST submitted to CiviCRM. eWay is the only holder of the private key to decrypt them.
 Credit for this feature : Cross Functional
 
-The branch supports CiviCRM versions 4.6+ with this patch https://issues.civicrm.org/jira/browse/CRM-17293
+The branch supports CiviCRM versions 4.6+ with [this patch](https://patch-diff.githubusercontent.com/raw/civicrm/civicrm-core/pull/6824.patch) https://issues.civicrm.org/jira/browse/CRM-17293
+
 4.6.9 & above should have the patch.
 
 This branch has had the SINGLE-PAYMENT processor upgraded to the new RAPID Direct api (with client side encryption has).
