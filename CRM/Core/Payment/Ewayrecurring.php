@@ -407,6 +407,8 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     curl_setopt($submit, CURLOPT_POST, TRUE);
     // Return the result on success, FALSE on failure.
     curl_setopt($submit, CURLOPT_RETURNTRANSFER, TRUE);
+    // Return an error if we hit 404 etc.
+    curl_setopt($submit, CURLOPT_FAILONERROR, TRUE);
     curl_setopt($submit, CURLOPT_VERBOSE, FALSE);
     curl_setopt($submit, CURLOPT_POSTFIELDS, json_encode($eWAYRequestFields));
     curl_setopt($submit, CURLOPT_TIMEOUT, 36000);
@@ -715,7 +717,7 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     $eWAYResponse = json_decode($responseData);
 
     if (self::isError($eWAYResponse)) {
-      throw new CRM_Core_Exception("Error: [" . implode(',', $eWAYResponse->Errors) . ".");
+      throw new CRM_Core_Exception("Error: [" . implode(',', $eWAYResponse->Errors) . "]");
     }
 
     $status = ($eWAYResponse->BeagleScore) ? ($eWAYResponse->ResponseMessage . ': ' . $eWAYResponse->BeagleScore) : $eWAYResponse->ResponseMessage;
