@@ -717,7 +717,7 @@ class CRM_Core_Payment_Ewayrecurring extends CRM_Core_Payment {
     $eWAYResponse = json_decode($responseData);
 
     if (self::isError($eWAYResponse)) {
-      throw new CRM_Core_Exception("Error: [" . implode(',', $eWAYResponse->Errors) . "]");
+      throw new CRM_Core_Exception(ts("Transaction failure (%1)", array(1 => $eWAYResponse->Errors)));
     }
 
     $status = ($eWAYResponse->BeagleScore) ? ($eWAYResponse->ResponseMessage . ': ' . $eWAYResponse->BeagleScore) : $eWAYResponse->ResponseMessage;
