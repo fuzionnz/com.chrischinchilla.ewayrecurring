@@ -52,5 +52,3 @@ cj('#crm-main-content-wrapper form').submit(function() {
     encryptField(cj('#cvv2'), CRM.eway.ewayKey);
   }
 );
-
-
