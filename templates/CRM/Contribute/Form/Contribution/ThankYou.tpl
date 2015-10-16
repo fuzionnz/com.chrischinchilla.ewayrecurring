@@ -296,7 +296,7 @@
         {else}
           <div class="crm-section no-label credit_card_details-section">
             <div class="content">{$credit_card_type}</div>
-            <div class="content">{$credit_card_number}</div>
+            <div class="content">{if $credit_card_number|count_characters > 19}XXXX-XXXX-XXXX-XXXX{else}{$credit_card_number}{/if}</div>
             <div class="content">{ts}Expires{/ts}: {$credit_card_exp_date|truncate:7:''|crmDate}</div>
             <div class="clear"></div>
           </div>
